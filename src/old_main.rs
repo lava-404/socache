@@ -4,14 +4,20 @@ use axum::{
   routing::{get, post},
   Json, Router,
 };
+use axum::extract::ws::{
+  WebSocket,
+  WebSocketUpgrade,
+};
+use axum::response::Response;
 use tokio::sync::RwLock;
 use reqwest::Client;
 use serde_json::Value;
 use std::{collections::{HashSet, HashMap},sync::{
   Arc, atomic::{AtomicUsize, Ordering}
 }};
-use futures_util::SinkExt;   
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Utf8Bytes};
+use tokio::sync::mpsc;
+use futures_util::{SinkExt, lock::Mutex, stream::{SplitSink}};   
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio::net::TcpStream;
 use moka::future::Cache;
 use std::time::Duration;
@@ -97,24 +103,43 @@ struct AppState {
       Message
       >
   >,
+  pending_requests: RwLock<HashMap<u64, String>>,
+
+  active_subscriptions: RwLock<HashMap<u64, String>>,
+  clients: RwLock<
+  HashMap<ClientId, mpsc::Sender<axum::extract::ws::Message>
+  >
+  >,
+  
 }
+
 
 #[tokio::main]
 async fn main() {
   let (socket, _) = connect_async(WS_URL).await.unwrap();
   let (write, read) = socket.split();
+  
   // Initialize shared state
   let shared_state = Arc::new(AppState {
       current_node_index: AtomicUsize::new(0),
       http_client: Client::new(), // Reusing the client is much faster
       cache: Cache::builder().time_to_live(Duration::from_secs(2)).build(),
       subscriptions: RwLock::new(HashMap::new()),
-      socket: socket
+      socket_write: Mutex::new(write),
+      pending_requests: RwLock::new(HashMap::new()),
+      active_subscriptions: RwLock::new(HashMap::new()),
+      clients: RwLock::new(HashMap::new())
+
+  });
+  let helius_state = shared_state.clone();
+
+  tokio::spawn(async move {
+      upstream_reader_loop(read, helius_state).await;
   });
 
   let app = Router::new()
       .route("/", get(|| async { "Hello World" }))
-      .route("/ws", post(handle_post_with_round_robin))
+      .route("/ws", get(ws_handler))
       .route("/", post(handle_post_with_round_robin))
       .with_state(shared_state); // Inject state into Axum
 
@@ -213,33 +238,155 @@ async fn handle_post_with_round_robin(
   Err(StatusCode::SERVICE_UNAVAILABLE)
 }
 
-async fn handle_ws(Json(payload): Json<Value>, State(state): State<Arc<AppState>> ) {
+async fn handle_subscription(payload: Value, state: Arc<AppState>, client_id: Uuid ) {
   let method = payload["method"].as_str().unwrap_or("");
-  if method.contains("accountSubscribe") {
-      let acc: Option<String> = payload
+  if method == "accountSubscribe" {
+      let acc: Option<&str> = payload
       .get("params")
       .and_then(|p| p.get(0))
-      .and_then(|m| m.as_str())
-      .map(|s| s.to_string()); // Use map to convert &str to String
+      .and_then(|m| m.as_str()); // Use map to convert &str to String
 
-      let client_id = Uuid::new_v4();
+      let acc_id = match acc {
+          Some(acc) => acc,
+          None => return,
+      };
       // Now acc is Option<String>
-      if let Some(account_id) = acc {
-          // account_id is now a String
-          let account: Account = account_id; // Assuming Account is a type alias for String
-          let mut subs: tokio::sync::RwLockWriteGuard<'_, HashMap<String, HashSet<Uuid>>> = state.subscriptions.write().await;
-          if !subs.contains_key(&account){
-              let (mut write, mut read) = state.socket.split();
-              match write.send(Message::text(payload.to_string())).await {
-                  Ok(_) => { /* Success */ }
-                  Err(e) => eprintln!("Failed to send message: {}", e),
-              }
-          
+      let needs_subscribe = !state.subscriptions.read().await.contains_key(acc_id);
 
-
-          }
-          subs.entry(account).or_insert_with(HashSet::new).insert(client_id);
+      if needs_subscribe {
+          let rpc_id = rand::random::<u64>();
+          let mut outgoing = payload.clone();
+          outgoing["id"] = serde_json::json!(rpc_id);
+          state
+          .pending_requests
+          .write()
+          .await
+          .insert(rpc_id, acc_id.to_string());
+          let mut writer = state.socket_write.lock().await;
+          writer.send(Message::text((outgoing.to_string()))).await.unwrap();
       }
-  
+
+      let mut subs = state.subscriptions.write().await;
+      subs.entry(acc_id.to_string()).or_insert_with(HashSet::new).insert(client_id);
+
   }
+}
+
+async fn upstream_reader_loop(
+  mut ws_stream: futures_util::stream::SplitStream<
+      WebSocketStream<MaybeTlsStream<TcpStream>>
+  >,
+  state: Arc<AppState>,
+){
+  while let Some(Ok(msg)) = ws_stream.next().await {
+      if let Message::Text((text)) = msg {
+          if let Ok(json) = serde_json::from_str::<Value>(&text) {
+              if let Some(sub_id) = json.get("result").and_then(|r| r.as_u64()) {
+                  if json.get("method").is_none() {
+                      if let Some(req_id) = json.get("id").and_then(|i| i.as_u64()){
+
+                          if let Some(account) = state.pending_requests.write().await.remove(&req_id){
+                              state
+                              .active_subscriptions
+                              .write()
+                              .await
+                              .insert(sub_id, account);
+                          }
+                  
+                      
+                      }
+                  }
+              }
+
+              if let Some(method) = json.get("method").and_then(|i| i.as_str()){
+                  if method == "accountNotification" {
+                      if let Some(sub_id) = json["params"]["subscription"].as_u64() {
+                          if let Some(acc) = state.active_subscriptions.read().await.get(&sub_id) {
+                              if let Some(client_ids) =
+                              state.subscriptions.read().await.get(acc)
+                          {
+                              for client_id in client_ids {
+                                  if let Some(sender) =
+                                      state.clients.read().await.get(client_id)
+                                  {
+                                      let _ = sender
+                                      .send(axum::extract::ws::Message::Text(
+                                          text.to_string().into()
+                                      ))
+                                          .await;
+                                  }
+                              }
+                          }
+                          }
+                         
+
+                      }
+                  }
+              }
+          }
+      }
+  }
+}
+
+async fn ws_handler(
+  ws: WebSocketUpgrade,
+  State(state): State<Arc<AppState>>,
+) -> Response {
+  ws.on_upgrade(move |socket| {
+      handle_client(socket, state)
+  })
+}
+
+async fn handle_client(
+  socket: WebSocket,
+  state: Arc<AppState>,
+) {
+  let client_id = Uuid::new_v4();
+
+  let (tx, mut rx) =
+      mpsc::channel::<axum::extract::ws::Message>(100);
+
+  let (mut sender, mut receiver) = socket.split();
+
+  tokio::spawn(async move {
+      while let Some(msg) = rx.recv().await {
+          sender.send(msg).await.unwrap();
+      }
+  });
+
+  state
+      .clients
+      .write()
+      .await
+      .insert(client_id, tx);
+
+  while let Some(Ok(msg)) = receiver.next().await {
+      if let axum::extract::ws::Message::Text(text) = msg {
+          if let Ok(payload) =
+              serde_json::from_str::<Value>(&text)
+          {
+              handle_subscription(
+                  payload,
+                  state.clone(),
+                  client_id,
+                  
+              )
+              .await;
+          }
+      }
+  }
+  state
+  .clients
+  .write()
+  .await
+  .remove(&client_id);
+
+  let mut subs = state.subscriptions.write().await;
+
+  for clients in subs.values_mut() {
+      clients.remove(&client_id);
+  }
+  subs.retain(|_, clients| !clients.is_empty());
+
+  println!("Client disconnected: {}", client_id);
 }

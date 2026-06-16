@@ -35,7 +35,7 @@ const NODES: [&str; 5] = [
     "https://rpc.ankr.com/solana_devnet/2f5a4dc8e43c3446315186397fd4f9200c32075b310dd7e31acad693f5938dd8",  // ankr
     "https://api.mainnet-beta.solana.com",                                        // mainnet-beta
 ];
-const WS_URL: &str= "wss://mainnet.helius-rpc.com/?api-key=ffe3568c-a4ff-4b2f-a2f5-53d891278489";
+const WS_URL: &str= "wss://devnet.helius-rpc.com/?api-key=ffe3568c-a4ff-4b2f-a2f5-53d891278489";
 const READ_METHODS: [&str; 43] = [
     // Cluster and Network Information
     "getClusterNodes",
@@ -240,7 +240,7 @@ async fn handle_post_with_round_robin(
 
 async fn handle_subscription(payload: Value, state: Arc<AppState>, client_id: Uuid ) {
     let method = payload["method"].as_str().unwrap_or("");
-    if method.contains("accountSubscribe") {
+    if method == "accountSubscribe" {
         let acc: Option<&str> = payload
         .get("params")
         .and_then(|p| p.get(0))
@@ -257,12 +257,12 @@ async fn handle_subscription(payload: Value, state: Arc<AppState>, client_id: Uu
             let rpc_id = rand::random::<u64>();
             let mut outgoing = payload.clone();
             outgoing["id"] = serde_json::json!(rpc_id);
-            let mut writer = state.socket_write.lock().await;
             state
             .pending_requests
             .write()
             .await
             .insert(rpc_id, acc_id.to_string());
+            let mut writer = state.socket_write.lock().await;
             writer.send(Message::text((outgoing.to_string()))).await.unwrap();
         }
 
@@ -300,6 +300,7 @@ async fn upstream_reader_loop(
 
                 if let Some(method) = json.get("method").and_then(|i| i.as_str()){
                     if method == "accountNotification" {
+                        println!("Got notification from helius");
                         if let Some(sub_id) = json["params"]["subscription"].as_u64() {
                             if let Some(acc) = state.active_subscriptions.read().await.get(&sub_id) {
                                 if let Some(client_ids) =
@@ -314,6 +315,7 @@ async fn upstream_reader_loop(
                                             text.to_string().into()
                                         ))
                                             .await;
+                                        println!("Sending notification to client {}", client_id);
                                     }
                                 }
                             }
@@ -350,7 +352,10 @@ async fn handle_client(
 
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            sender.send(msg).await.unwrap();
+            if let Err(e) = sender.send(msg).await {
+                println!("Send failed: {:?}", e);
+                break;
+            }
         }
     });
 
@@ -375,6 +380,18 @@ async fn handle_client(
             }
         }
     }
+    state
+    .clients
+    .write()
+    .await
+    .remove(&client_id);
+
+    let mut subs = state.subscriptions.write().await;
+
+    for clients in subs.values_mut() {
+        clients.remove(&client_id);
+    }
+    subs.retain(|_, clients| !clients.is_empty());
 
     println!("Client disconnected: {}", client_id);
 }
