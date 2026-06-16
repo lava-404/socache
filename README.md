@@ -72,10 +72,9 @@ Example request:
 ```
 
 Output Images:
-<img width="778" height="402" alt="image" src="https://github.com/user-attachments/assets/f86af2aa-0437-40fb-a668-dd5052324d6a" />
+<img src="https://github.com/user-attachments/assets/f86af2aa-0437-40fb-a668-dd5052324d6a" alt="Screenshot 1" width="500" />
 
-<img width="1844" height="142" alt="image" src="https://github.com/user-attachments/assets/6e41b5bc-ba16-4c65-b0c0-9cd71e14ca30" />
-
+<img src="https://github.com/user-attachments/assets/6e41b5bc-ba16-4c65-b0c0-9cd71e14ca30" alt="Screenshot 2" width="600" />   
 
 ### Round Robin Load Balancing
 
