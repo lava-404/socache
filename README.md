@@ -1,4 +1,4 @@
-<img width="1598" height="464" alt="image" src="https://github.com/user-attachments/assets/eca761e7-650e-4895-b268-1f768edcce90" /># Solana RPC Middleware 🚀
+# Solana RPC Middleware 🚀
 
 [![Rust](https://img.shields.io/badge/Rust-000000?style=flat\&logo=rust\&logoColor=white)](https://www.rust-lang.org/)
 [![Tokio](https://img.shields.io/badge/Tokio-Async_Runtime-green)](https://tokio.rs/)
@@ -58,18 +58,23 @@ Example request:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "getBalance",
-  "params": [
-    "GwsPP9HHhCvEQeu3HTFzsVL6DEtnnYw4ALEtA3fMBC9Q"
-  ]
-}
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "accountSubscribe",
+      "params": [
+        "DtmVqUN2RAe7RHG4QJ4NoGRkMAkhFqchV32q6ibvu8aN",
+        {
+          "encoding": "jsonParsed",
+          "commitment": "confirmed"
+        }
+      ]
+} 
 ```
 
 Output Images:
 <img width="778" height="402" alt="image" src="https://github.com/user-attachments/assets/f86af2aa-0437-40fb-a668-dd5052324d6a" />
 
+<img width="1844" height="142" alt="image" src="https://github.com/user-attachments/assets/6e41b5bc-ba16-4c65-b0c0-9cd71e14ca30" />
 
 
 ### Round Robin Load Balancing
