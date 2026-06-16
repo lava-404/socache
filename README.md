@@ -68,9 +68,8 @@ Example request:
 ```
 
 Output Images:
-<img width="1598" height="464" alt="image" src="https://github.com/user-attachments/assets/f18886ee-4b2b-4511-bd00-90b6923f7d98" />
+<img width="778" height="402" alt="image" src="https://github.com/user-attachments/assets/f86af2aa-0437-40fb-a668-dd5052324d6a" />
 
-<img width="1850" height="152" alt="image" src="https://github.com/user-attachments/assets/3e6ed162-0134-48c8-9828-304a4405e4ee" />
 
 
 ### Round Robin Load Balancing
