@@ -1,4 +1,4 @@
-# Solana RPC Middleware 🚀
+<img width="1598" height="464" alt="image" src="https://github.com/user-attachments/assets/eca761e7-650e-4895-b268-1f768edcce90" /># Solana RPC Middleware 🚀
 
 [![Rust](https://img.shields.io/badge/Rust-000000?style=flat\&logo=rust\&logoColor=white)](https://www.rust-lang.org/)
 [![Tokio](https://img.shields.io/badge/Tokio-Async_Runtime-green)](https://tokio.rs/)
@@ -66,6 +66,12 @@ Example request:
   ]
 }
 ```
+
+Output Images:
+<img width="1598" height="464" alt="image" src="https://github.com/user-attachments/assets/f18886ee-4b2b-4511-bd00-90b6923f7d98" />
+
+<img width="1850" height="152" alt="image" src="https://github.com/user-attachments/assets/3e6ed162-0134-48c8-9828-304a4405e4ee" />
+
 
 ### Round Robin Load Balancing
 
